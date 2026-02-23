@@ -75,67 +75,66 @@ class LJPcCalendarModuleAPIController extends Controller {
 		 *
 		 * @return array<string, bool> Keys are IDs (string), value always true for fast lookup
 		 */
-private function getValidPrincipals(): array {
-	$users = [];
-	$teams = [];
+			private function getValidPrincipals(): array {
+				$users = [];
+				$teams = [];
 
-	// Teams (optional module)
-	if ( class_exists( Teams::class ) ) {
-		// Do NOT cast to array: Teams::getTeams(true) may return a Collection/Iterable.
-		// Casting a Collection to array yields internal properties, not items, which would
-		// make us think there are no teams and prune all team permissions on save.
-		foreach ( Teams::getTeams( true ) as $team ) {
-			$teamId = $this->teamId( $team );
-			if ( $teamId === null ) {
-				continue;
-			}
-			$teams[$teamId] = true;
+				// Teams (optional module)
+				if ( class_exists( Teams::class ) ) {
+					// Do NOT cast to array: Teams::getTeams(true) may return a Collection/Iterable.
+					// Casting a Collection to array yields internal properties, not items, which would
+					// make us think there are no teams and prune all team permissions on save.
+					foreach ( Teams::getTeams( true ) as $team ) {
+						$teamId = $this->teamId( $team );
+						if ( $teamId === null ) {
+							continue;
+						}
+						$teams[$teamId] = true;
+					}
+				}
+
+					// Active users
+					$allUsers = User::where( 'status', User::STATUS_ACTIVE )
+					->remember( Helper::cacheTime() )
+					->get();
+					foreach ( $allUsers as $user ) {
+						$users[(string) $user->id] = true;
+					}
+
+					// Canonical permission keys: users are numeric strings; teams are namespaced.
+					$valid = $users;
+					foreach ( array_keys( $teams ) as $teamId ) {
+						$valid[self::TEAM_PRINCIPAL_PREFIX . $teamId] = true;
+					}
+
+					return [
+						'users' => $users,
+						'teams' => $teams,
+						'valid' => $valid,
+					];
 		}
-	}
 
-	// Active users
-	$allUsers = User::where( 'status', User::STATUS_ACTIVE )
-	              ->remember( Helper::cacheTime() )
-	              ->get();
-	foreach ( $allUsers as $user ) {
-		$users[(string) $user->id] = true;
-	}
+		private function isTeamKey( string $key ): bool {
+			return str_starts_with( $key, self::TEAM_PRINCIPAL_PREFIX )
+			|| str_starts_with( $key, 'team_' )
+			|| str_starts_with( $key, 'team:' );
+		}
 
-	// Canonical permission keys: users are numeric strings; teams are namespaced.
-	$valid = $users;
-	foreach ( array_keys( $teams ) as $teamId ) {
-		$valid[self::TEAM_PRINCIPAL_PREFIX . $teamId] = true;
-	}
-
-	return [
-		'users' => $users,
-		'teams' => $teams,
-		'valid' => $valid,
-	];
-}
-
-private function isTeamKey( string $key ): bool {
-	return str_starts_with( $key, self::TEAM_PRINCIPAL_PREFIX )
-		|| str_starts_with( $key, 'team_' )
-		|| str_starts_with( $key, 'team:' );
-}
-
-private function normalizeTeamKey( string $key ): ?string {
-	if ( str_starts_with( $key, self::TEAM_PRINCIPAL_PREFIX ) ) {
-		$id = substr( $key, strlen( self::TEAM_PRINCIPAL_PREFIX ) );
-		return ctype_digit( $id ) ? $id : null;
-	}
-	if ( str_starts_with( $key, 'team_' ) ) {
-		$id = substr( $key, 5 );
-		return ctype_digit( $id ) ? $id : null;
-	}
-	if ( str_starts_with( $key, 'team:' ) ) {
-		$id = substr( $key, 5 );
-		return ctype_digit( $id ) ? $id : null;
-	}
-	return null;
-}
-
+		private function normalizeTeamKey( string $key ): ?string {
+			if ( str_starts_with( $key, self::TEAM_PRINCIPAL_PREFIX ) ) {
+				$id = substr( $key, strlen( self::TEAM_PRINCIPAL_PREFIX ) );
+				return ctype_digit( $id ) ? $id : null;
+			}
+			if ( str_starts_with( $key, 'team_' ) ) {
+				$id = substr( $key, 5 );
+				return ctype_digit( $id ) ? $id : null;
+			}
+			if ( str_starts_with( $key, 'team:' ) ) {
+				$id = substr( $key, 5 );
+				return ctype_digit( $id ) ? $id : null;
+			}
+			return null;
+		}
 
 		/**
 		 * Remove permission rows for principals (teams/users) that no longer exist.
@@ -153,29 +152,29 @@ private function normalizeTeamKey( string $key ): ?string {
 			$valid      = $principals['valid'];
 			$clean = [];
 
-foreach ( $permissions as $id => $permission ) {
-	$key = (string) $id;
+			foreach ( $permissions as $id => $permission ) {
+				$key = (string) $id;
 
-	// Canonicalize team keys.
-	if ( $this->isTeamKey( $key ) ) {
-		$teamId = $this->normalizeTeamKey( $key );
-		if ( $teamId === null || ! isset( $principals['teams'][$teamId] ) ) {
-			continue;
-		}
-		$key = self::TEAM_PRINCIPAL_PREFIX . $teamId;
-	} else if ( ctype_digit( $key ) ) {
-		// Backward compatibility: legacy numeric team IDs.
-		// Prefer users when ambiguous (user ID and team ID overlap).
-		if ( ! isset( $principals['users'][$key] ) && isset( $principals['teams'][$key] ) ) {
-			$key = self::TEAM_PRINCIPAL_PREFIX . $key;
-		}
-	}
+				// Canonicalize team keys.
+				if ( $this->isTeamKey( $key ) ) {
+					$teamId = $this->normalizeTeamKey( $key );
+					if ( $teamId === null || ! isset( $principals['teams'][$teamId] ) ) {
+						continue;
+					}
+					$key = self::TEAM_PRINCIPAL_PREFIX . $teamId;
+				} else if ( ctype_digit( $key ) ) {
+					// Backward compatibility: legacy numeric team IDs.
+					// Prefer users when ambiguous (user ID and team ID overlap).
+					if ( ! isset( $principals['users'][$key] ) && isset( $principals['teams'][$key] ) ) {
+						$key = self::TEAM_PRINCIPAL_PREFIX . $key;
+					}
+				}
 
-	if ( ! isset( $valid[$key] ) ) {
-		continue;
-	}
+				if ( ! isset( $valid[$key] ) ) {
+					continue;
+				}
 
-	$clean[$key] = [
+				$clean[$key] = [
 					'showInDashboard' => (bool) ( $permission['showInDashboard'] ?? false ),
 					'showInCalendar'  => (bool) ( $permission['showInCalendar'] ?? false ),
 					'createItems'     => (bool) ( $permission['createItems'] ?? false ),
