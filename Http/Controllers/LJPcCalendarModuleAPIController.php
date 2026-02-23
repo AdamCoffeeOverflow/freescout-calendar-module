@@ -1038,6 +1038,31 @@ foreach ( $permissions as $id => $permission ) {
 						}
 				}
 
+
+
+				$result = str_replace( '{{title}}', $conversation->subject, $template );
+
+				// Get the field name mapping from calendar's custom fields configuration
+				$fieldMapping = [];
+
+				if ( ! empty( $calendar->custom_fields['fields'] ) ) {
+						foreach ( $calendar->custom_fields['fields'] as $field ) {
+								$fieldMapping[ 'custom_field_' . $field['id'] ] = $field['name'];
+						}
+				}
+
+				// Process custom fields using the mapping
+				foreach ( $customFields as $fieldId => $value ) {
+						if ( is_array( $value ) ) {
+								$value = implode( ', ', $value );
+						}
+
+						if ( isset( $fieldMapping[ $fieldId ] ) ) {
+								$fieldName = $fieldMapping[ $fieldId ];
+								$result    = str_replace( '{{' . $fieldName . '}}', $value ?? '', $result );
+						}
+				}
+
 				return $result;
 		}
 
