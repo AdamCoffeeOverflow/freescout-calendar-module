@@ -39,151 +39,90 @@ class LJPcCalendarModuleAPIController extends Controller {
 		 * may return Eloquent models or plain arrays. Normalize access.
 		 */
 		private function teamId( $team ): ?string {
-			if ( is_object( $team ) && isset( $team->id ) ) {
-				return (string) $team->id;
-			}
-			if ( is_array( $team ) && isset( $team['id'] ) ) {
-				return (string) $team['id'];
-			}
-			return null;
+				if ( is_object( $team ) && isset( $team->id ) ) {
+						return (string) $team->id;
+				}
+				if ( is_array( $team ) && isset( $team['id'] ) ) {
+						return (string) $team['id'];
+				}
+				return null;
 		}
 
 		private function teamLabel( $team ): string {
-			// Teams module historically uses "getFirstName()" (Team model extends User-ish API)
-			if ( is_object( $team ) ) {
-				if ( method_exists( $team, 'getFirstName' ) ) {
-					return (string) $team->getFirstName();
+				if ( is_object( $team ) ) {
+						if ( method_exists( $team, 'getFirstName' ) ) {
+								return (string) $team->getFirstName();
+						}
+						if ( isset( $team->name ) ) {
+								return (string) $team->name;
+						}
+						if ( isset( $team->title ) ) {
+								return (string) $team->title;
+						}
 				}
-				if ( isset( $team->name ) ) {
-					return (string) $team->name;
+				if ( is_array( $team ) ) {
+						return (string) ( $team['name'] ?? $team['title'] ?? $team['first_name'] ?? '' );
 				}
-				if ( isset( $team->title ) ) {
-					return (string) $team->title;
+				return '';
+		}
+
+		private function isTeamKey( string $key ): bool {
+				return str_starts_with( $key, self::TEAM_PRINCIPAL_PREFIX )
+						|| str_starts_with( $key, 'team_' )
+						|| str_starts_with( $key, 'team:' );
+		}
+
+		private function normalizeTeamKey( string $key ): ?string {
+				if ( str_starts_with( $key, self::TEAM_PRINCIPAL_PREFIX ) ) {
+						$id = substr( $key, strlen( self::TEAM_PRINCIPAL_PREFIX ) );
+						return ctype_digit( $id ) ? $id : null;
 				}
-			}
-			if ( is_array( $team ) ) {
-				return (string) ( $team['name'] ?? $team['title'] ?? $team['first_name'] ?? '' );
-			}
-			return '';
+				if ( str_starts_with( $key, 'team_' ) ) {
+						$id = substr( $key, 5 );
+						return ctype_digit( $id ) ? $id : null;
+				}
+				if ( str_starts_with( $key, 'team:' ) ) {
+						$id = substr( $key, 5 );
+						return ctype_digit( $id ) ? $id : null;
+				}
+				return null;
 		}
-		/**
-		 * Build a map of all currently valid "principals" that can appear in calendar permissions.
-		 *
-		 * Principals are:
-		 *  - Active users (App\\User)
-		 *  - Teams (if the Teams module is installed)
-		 *
-		 * @return array<string, bool> Keys are IDs (string), value always true for fast lookup
-		 */
-private function getValidPrincipals(): array {
-	$users = [];
-	$teams = [];
 
-	// Teams (optional module)
-	if ( class_exists( Teams::class ) ) {
-		// Do NOT cast to array: Teams::getTeams(true) may return a Collection/Iterable.
-		// Casting a Collection to array yields internal properties, not items, which would
-		// make us think there are no teams and prune all team permissions on save.
-		foreach ( Teams::getTeams( true ) as $team ) {
-			$teamId = $this->teamId( $team );
-			if ( $teamId === null ) {
-				continue;
-			}
-			$teams[$teamId] = true;
-		}
-	}
+		private function getValidPrincipals(): array {
+				$users = [];
+				$teams = [];
 
-	// Active users
-	$allUsers = User::where( 'status', User::STATUS_ACTIVE )
-	              ->remember( Helper::cacheTime() )
-	              ->get();
-	foreach ( $allUsers as $user ) {
-		$users[(string) $user->id] = true;
-	}
+				// Teams (optional module)
+				if ( class_exists( Teams::class ) ) {
+						// Do NOT cast to array: Teams::getTeams(true) may return a Collection/Iterable.
+						foreach ( Teams::getTeams( true ) as $team ) {
+								$teamId = $this->teamId( $team );
+								if ( $teamId === null ) {
+										continue;
+								}
+								$teams[ $teamId ] = true;
+						}
+				}
 
-	// Canonical permission keys: users are numeric strings; teams are namespaced.
-	$valid = $users;
-	foreach ( array_keys( $teams ) as $teamId ) {
-		$valid[self::TEAM_PRINCIPAL_PREFIX . $teamId] = true;
-	}
+				// Active users
+				$allUsers = User::where( 'status', User::STATUS_ACTIVE )
+								->remember( Helper::cacheTime() )
+								->get();
+				foreach ( $allUsers as $user ) {
+						$users[ (string) $user->id ] = true;
+				}
 
-	return [
-		'users' => $users,
-		'teams' => $teams,
-		'valid' => $valid,
-	];
-}
+				// Canonical permission keys: users are numeric strings; teams are namespaced.
+				$valid = $users;
+				foreach ( array_keys( $teams ) as $teamId ) {
+						$valid[ self::TEAM_PRINCIPAL_PREFIX . $teamId ] = true;
+				}
 
-private function isTeamKey( string $key ): bool {
-	return str_starts_with( $key, self::TEAM_PRINCIPAL_PREFIX )
-		|| str_starts_with( $key, 'team_' )
-		|| str_starts_with( $key, 'team:' );
-}
-
-private function normalizeTeamKey( string $key ): ?string {
-	if ( str_starts_with( $key, self::TEAM_PRINCIPAL_PREFIX ) ) {
-		$id = substr( $key, strlen( self::TEAM_PRINCIPAL_PREFIX ) );
-		return ctype_digit( $id ) ? $id : null;
-	}
-	if ( str_starts_with( $key, 'team_' ) ) {
-		$id = substr( $key, 5 );
-		return ctype_digit( $id ) ? $id : null;
-	}
-	if ( str_starts_with( $key, 'team:' ) ) {
-		$id = substr( $key, 5 );
-		return ctype_digit( $id ) ? $id : null;
-	}
-	return null;
-}
-
-
-		/**
-		 * Remove permission rows for principals (teams/users) that no longer exist.
-		 * This fixes stale permission keys after deleting a team (Teams module) or deactivating a user.
-		 *
-		 * @param array|null $permissions
-		 * @return array
-		 */
-		private function sanitizePermissions( $permissions ): array {
-			if ( ! is_array( $permissions ) ) {
-				return [];
-			}
-
-			$principals = $this->getValidPrincipals();
-			$valid      = $principals['valid'];
-			$clean = [];
-
-foreach ( $permissions as $id => $permission ) {
-	$key = (string) $id;
-
-	// Canonicalize team keys.
-	if ( $this->isTeamKey( $key ) ) {
-		$teamId = $this->normalizeTeamKey( $key );
-		if ( $teamId === null || ! isset( $principals['teams'][$teamId] ) ) {
-			continue;
-		}
-		$key = self::TEAM_PRINCIPAL_PREFIX . $teamId;
-	} else if ( ctype_digit( $key ) ) {
-		// Backward compatibility: legacy numeric team IDs.
-		// Prefer users when ambiguous (user ID and team ID overlap).
-		if ( ! isset( $principals['users'][$key] ) && isset( $principals['teams'][$key] ) ) {
-			$key = self::TEAM_PRINCIPAL_PREFIX . $key;
-		}
-	}
-
-	if ( ! isset( $valid[$key] ) ) {
-		continue;
-	}
-
-	$clean[$key] = [
-					'showInDashboard' => (bool) ( $permission['showInDashboard'] ?? false ),
-					'showInCalendar'  => (bool) ( $permission['showInCalendar'] ?? false ),
-					'createItems'     => (bool) ( $permission['createItems'] ?? false ),
-					'editItems'       => (bool) ( $permission['editItems'] ?? false ),
+				return [
+						'users' => $users,
+						'teams' => $teams,
+						'valid' => $valid,
 				];
-			}
-
-			return $clean;
 		}
 
 		/**
@@ -192,43 +131,81 @@ foreach ( $permissions as $id => $permission ) {
 		 * The UI may send permissions either as:
 		 *  - an associative array keyed by principal id (preferred), or
 		 *  - a numerically indexed list of objects with an 'id' field.
-		 *
-		 * Without normalization, numeric indexes (0,1,2,...) get treated as IDs and
-		 * sanitizePermissions() prunes everything as "invalid", making changes appear not to save.
-		 *
-		 * @param mixed $raw
-		 * @return array
 		 */
 		private function normalizePermissionsInput( $raw ): array {
-			if ( ! is_array( $raw ) ) {
-				return [];
-			}
-
-			// If it already looks like an associative map keyed by IDs, keep as-is.
-			$keys = array_keys( $raw );
-			$allNumeric = true;
-			foreach ( $keys as $k ) {
-				$kStr = (string) $k;
-				if ( $kStr === '' || ! ctype_digit( $kStr ) ) {
-					$allNumeric = false;
-					break;
+				if ( ! is_array( $raw ) ) {
+						return [];
 				}
-			}
-			if ( ! $allNumeric ) {
-				return $raw;
-			}
 
-			// Otherwise assume it's a list of rows like: [ {id: 123, ...}, ... ].
-			$map = [];
-			foreach ( $raw as $row ) {
-				if ( is_array( $row ) && ! empty( $row['id'] ) ) {
-					$map[(string) $row['id']] = $row;
+				// If it already looks like an associative map keyed by IDs, keep as-is.
+				$keys       = array_keys( $raw );
+				$allNumeric = true;
+				foreach ( $keys as $k ) {
+						$kStr = (string) $k;
+						if ( $kStr === '' || ! ctype_digit( $kStr ) ) {
+								$allNumeric = false;
+								break;
+						}
 				}
-			}
+				if ( ! $allNumeric ) {
+						return $raw;
+				}
 
-			return $map;
+				// Otherwise assume it's a list of rows like: [ {id: 123, ...}, ... ].
+				$map = [];
+				foreach ( $raw as $row ) {
+						if ( is_array( $row ) && ! empty( $row['id'] ) ) {
+								$map[ (string) $row['id'] ] = $row;
+						}
+				}
+
+				return $map;
 		}
 
+		/**
+		 * Remove permission rows for principals (teams/users) that no longer exist.
+		 */
+		private function sanitizePermissions( $permissions ): array {
+				if ( ! is_array( $permissions ) ) {
+						return [];
+				}
+
+				$principals = $this->getValidPrincipals();
+				$valid      = $principals['valid'];
+				$clean      = [];
+
+				foreach ( $permissions as $id => $permission ) {
+						$key = (string) $id;
+
+						// Canonicalize team keys.
+						if ( $this->isTeamKey( $key ) ) {
+								$teamId = $this->normalizeTeamKey( $key );
+								if ( $teamId === null || ! isset( $principals['teams'][ $teamId ] ) ) {
+										continue;
+								}
+								$key = self::TEAM_PRINCIPAL_PREFIX . $teamId;
+						} else if ( ctype_digit( $key ) ) {
+								// Backward compatibility: legacy numeric team IDs.
+								// Prefer users when ambiguous (user ID and team ID overlap).
+								if ( ! isset( $principals['users'][ $key ] ) && isset( $principals['teams'][ $key ] ) ) {
+										$key = self::TEAM_PRINCIPAL_PREFIX . $key;
+								}
+						}
+
+						if ( ! isset( $valid[ $key ] ) ) {
+								continue;
+						}
+
+						$clean[ $key ] = [
+								'showInDashboard' => (bool) ( $permission['showInDashboard'] ?? false ),
+								'showInCalendar'  => (bool) ( $permission['showInCalendar'] ?? false ),
+								'createItems'     => (bool) ( $permission['createItems'] ?? false ),
+								'editItems'       => (bool) ( $permission['editItems'] ?? false ),
+						];
+				}
+
+				return $clean;
+		}
 
 		private function requireAuthUserId(): int {
 				$userId = auth()->id();
@@ -263,13 +240,13 @@ foreach ( $permissions as $id => $permission ) {
 				// Add team members to the response array
 				/** @var Team $team */
 				foreach ( $allTeams as $team ) {
-					$teamId = $this->teamId( $team );
-					if ( $teamId === null ) {
-						continue;
-					}
+						$teamId = $this->teamId( $team );
+						if ( $teamId === null ) {
+								continue;
+						}
 						$response['results'][] = [
-						'id'   => self::TEAM_PRINCIPAL_PREFIX . $teamId,
-						'text' => 'Team: ' . $this->teamLabel( $team ),
+								'id'   => self::TEAM_PRINCIPAL_PREFIX . $teamId,
+								'text' => 'Team: ' . $this->teamLabel( $team ),
 						];
 				}
 
@@ -293,13 +270,10 @@ foreach ( $permissions as $id => $permission ) {
 		public function getCalendars(): JsonResponse {
 				$calendars = Calendar::all();
 
-				// Prune stale permission keys (e.g. deleted Teams principals) to avoid broken UI and errors.
+				// Sanitize stale permission keys (e.g. deleted Teams principals) for the response only.
+				// Do not persist here: GET endpoints must stay read-only.
 				foreach ( $calendars as $calendar ) {
-					$clean = $this->sanitizePermissions( $calendar->permissions );
-					if ( $clean !== ( $calendar->permissions ?? [] ) ) {
-						$calendar->permissions = $clean;
-						$calendar->save();
-					}
+						$calendar->permissions = $this->sanitizePermissions( $calendar->permissions );
 				}
 
 				return response()->json( $calendars );
@@ -340,9 +314,9 @@ foreach ( $permissions as $id => $permission ) {
 								'refresh'  => $request->input( 'refresh' ),
 						] );
 				}
+
 				$permissions = [];
-				$rawPermissions = $this->normalizePermissionsInput( $request->input( 'permissions', [] ) );
-				foreach ( $rawPermissions as $id => $permission ) {
+				foreach ( (array) $request->input( 'permissions', [] ) as $id => $permission ) {
 						$permissions[ $id ] = [
 								'showInDashboard' => $permission['showInDashboard'] ?? false,
 								'showInCalendar'  => $permission['showInCalendar'] ?? false,
@@ -427,9 +401,9 @@ foreach ( $permissions as $id => $permission ) {
 								'refresh'  => $request->input( 'refresh' ),
 						];
 				}
+
 				$permissions = [];
-				$rawPermissions = $this->normalizePermissionsInput( $request->input( 'permissions', [] ) );
-				foreach ( $rawPermissions as $id => $permission ) {
+				foreach ( (array) $request->input( 'permissions', [] ) as $id => $permission ) {
 						$permissions[ $id ] = [
 								'showInDashboard' => $permission['showInDashboard'],
 								'showInCalendar'  => $permission['showInCalendar'],
@@ -942,12 +916,10 @@ foreach ( $permissions as $id => $permission ) {
 						$calendarItem->title       = $validatedData['title'] ?? 'Untitled Event';
 						$calendarItem->start       = $start ?? Carbon::now();
 						$calendarItem->end         = $end ?? Carbon::now()->addHour();
-						$calendarItem->is_all_day  = $isAllDay ?? false;
-									$calendarItem->is_private  = false;
-									$calendarItem->is_read_only = false;
-									$calendarItem->state       = 'active';
-						$calendarItem->is_private  = $validatedData['is_private'] ?? false;
-						$calendarItem->state       = $validatedData['state'] ?? 'active';
+						$calendarItem->is_all_day    = $isAllDay ?? false;
+						$calendarItem->is_private    = $validatedData['is_private'] ?? false;
+						$calendarItem->is_read_only  = false;
+						$calendarItem->state         = $validatedData['state'] ?? 'active';
 
 						$calendarItem->location      = $validatedData['location'] ?? '';
 						$calendarItem->body          = $validatedData['body'] ?? '';
@@ -1014,31 +986,6 @@ foreach ( $permissions as $id => $permission ) {
 				if ( ! $conversation ) {
 						return $template;
 				}
-
-				$result = str_replace( '{{title}}', $conversation->subject, $template );
-
-				// Get the field name mapping from calendar's custom fields configuration
-				$fieldMapping = [];
-
-				if ( ! empty( $calendar->custom_fields['fields'] ) ) {
-						foreach ( $calendar->custom_fields['fields'] as $field ) {
-								$fieldMapping[ 'custom_field_' . $field['id'] ] = $field['name'];
-						}
-				}
-
-				// Process custom fields using the mapping
-				foreach ( $customFields as $fieldId => $value ) {
-						if ( is_array( $value ) ) {
-								$value = implode( ', ', $value );
-						}
-
-						if ( isset( $fieldMapping[ $fieldId ] ) ) {
-								$fieldName = $fieldMapping[ $fieldId ];
-								$result    = str_replace( '{{' . $fieldName . '}}', $value ?? '', $result );
-						}
-				}
-
-
 
 				$result = str_replace( '{{title}}', $conversation->subject, $template );
 
@@ -1138,12 +1085,10 @@ foreach ( $permissions as $id => $permission ) {
 						);
 						$calendarItem->start       = $start ?? Carbon::now();
 						$calendarItem->end         = $end ?? Carbon::now()->addHour();
-						$calendarItem->is_all_day  = $isAllDay ?? false;
-									$calendarItem->is_private  = false;
-									$calendarItem->is_read_only = false;
-									$calendarItem->state       = 'active';
-						$calendarItem->is_private  = false;
-						$calendarItem->state       = 'active';
+						$calendarItem->is_all_day    = $isAllDay ?? false;
+						$calendarItem->is_private    = false;
+						$calendarItem->is_read_only  = false;
+						$calendarItem->state         = 'active';
 						$calendarItem->location    = $validatedData['location'] ?? '';
 						$calendarItem->body        = $validatedData['body'] ?? '';
 
@@ -1266,12 +1211,8 @@ foreach ( $permissions as $id => $permission ) {
 						return response()->json( [ 'error' => 'Calendar not found' ], 404 );
 				}
 
-				// Ensure we never return stale principals to the settings UI
-				$clean = $this->sanitizePermissions( $calendar->permissions );
-				if ( $clean !== ( $calendar->permissions ?? [] ) ) {
-					$calendar->permissions = $clean;
-					$calendar->save();
-				}
+				// Sanitize stale principals for the settings UI response only (do not persist in GET).
+				$calendar->permissions = $this->sanitizePermissions( $calendar->permissions );
 
 				return response()->json( $calendar );
 		}
@@ -1458,11 +1399,11 @@ foreach ( $permissions as $id => $permission ) {
 								$calendarItem->title       = $event->summary ?? 'Untitled Event';
 								$calendarItem->start       = $start ?? Carbon::now();
 								$calendarItem->end         = $end ?? Carbon::now()->addHour();
-								$calendarItem->is_all_day  = $isAllDay ?? false;
-									$calendarItem->is_private  = false;
-									$calendarItem->is_read_only = false;
-									$calendarItem->state       = 'active';
-								$calendarItem->location    = $event->location ?? '';
+								$calendarItem->is_all_day    = $isAllDay ?? false;
+								$calendarItem->is_private    = false;
+								$calendarItem->is_read_only  = false;
+								$calendarItem->state         = 'active';
+								$calendarItem->location      = $event->location ?? '';
 								$calendarItem->body        = $event->description ?? '';
 
 								// Merge custom fields safely
