@@ -26,18 +26,9 @@ use Modules\LJPcCalendarModule\Jobs\UpdateExternalCalendarJob;
 use Modules\Teams\Providers\TeamsServiceProvider as Teams;
 
 class LJPcCalendarModuleAPIController extends Controller {
-		/**
-		 * Prefix used to namespace Team principals in permissions.
-		 *
-		 * Why: Teams and Users can share the same numeric ID space in different tables/modules.
-		 * Storing permissions keyed only by numbers can cause silent overwrites or pruning.
-		 */
+		// Namespace Team principals to avoid collisions with user IDs.
 		private const TEAM_PRINCIPAL_PREFIX = 't:';
 
-		/**
-		 * Teams module compatibility: depending on FreeScout/Teams versions, getTeams()
-		 * may return Eloquent models or plain arrays. Normalize access.
-		 */
 		private function teamId( $team ): ?string {
 				if ( is_object( $team ) && isset( $team->id ) ) {
 						return (string) $team->id;
@@ -125,13 +116,7 @@ class LJPcCalendarModuleAPIController extends Controller {
 				];
 		}
 
-		/**
-		 * Normalize permissions payload from the UI.
-		 *
-		 * The UI may send permissions either as:
-		 *  - an associative array keyed by principal id (preferred), or
-		 *  - a numerically indexed list of objects with an 'id' field.
-		 */
+		// Normalize permissions payload from the UI (map or numeric-indexed list).
 		private function normalizePermissionsInput( $raw ): array {
 				if ( ! is_array( $raw ) ) {
 						return [];
