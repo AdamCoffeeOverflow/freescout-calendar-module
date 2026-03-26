@@ -29,6 +29,13 @@ class LJPcCalendarModuleAPIController extends Controller {
 		// Namespace Team principals to avoid collisions with user IDs.
 		private const TEAM_PRINCIPAL_PREFIX = 't:';
 
+		/**
+		 * Cache valid principals for the lifetime of the request.
+		 *
+		 * @var array|null
+		 */
+		private $validPrincipalsCache = null;
+
 		private function teamId( $team ): ?string {
 				if ( is_object( $team ) && isset( $team->id ) ) {
 						return (string) $team->id;
@@ -80,6 +87,10 @@ class LJPcCalendarModuleAPIController extends Controller {
 		}
 
 		private function getValidPrincipals(): array {
+				if ( $this->validPrincipalsCache !== null ) {
+						return $this->validPrincipalsCache;
+				}
+
 				$users = [];
 				$teams = [];
 
@@ -109,11 +120,13 @@ class LJPcCalendarModuleAPIController extends Controller {
 						$valid[ self::TEAM_PRINCIPAL_PREFIX . $teamId ] = true;
 				}
 
-				return [
+				$this->validPrincipalsCache = [
 						'users' => $users,
 						'teams' => $teams,
 						'valid' => $valid,
 				];
+
+				return $this->validPrincipalsCache;
 		}
 
 		// Normalize permissions payload from the UI (map or numeric-indexed list).
@@ -122,25 +135,24 @@ class LJPcCalendarModuleAPIController extends Controller {
 						return [];
 				}
 
-				// If it already looks like an associative map keyed by IDs, keep as-is.
-				$keys       = array_keys( $raw );
-				$allNumeric = true;
-				foreach ( $keys as $k ) {
-						$kStr = (string) $k;
-						if ( $kStr === '' || ! ctype_digit( $kStr ) ) {
-								$allNumeric = false;
-								break;
+				// Associative maps keyed by principal IDs are already in the desired shape.
+				// Numeric user IDs become integer keys in PHP, so only treat the payload as a
+				// list when the keys are sequential 0..n.
+				$expectedIndex = 0;
+				foreach ( array_keys( $raw ) as $key ) {
+						if ( $key !== $expectedIndex ) {
+								return $raw;
 						}
-				}
-				if ( ! $allNumeric ) {
-						return $raw;
+						$expectedIndex++;
 				}
 
-				// Otherwise assume it's a list of rows like: [ {id: 123, ...}, ... ].
+				// Convert a numeric list of rows like: [ {id: 123, ...}, ... ] into an ID-keyed map.
 				$map = [];
 				foreach ( $raw as $row ) {
-						if ( is_array( $row ) && ! empty( $row['id'] ) ) {
+						if ( is_array( $row ) && array_key_exists( 'id', $row ) && $row['id'] !== null && $row['id'] !== '' ) {
 								$map[ (string) $row['id'] ] = $row;
+						} else if ( is_object( $row ) && isset( $row->id ) && $row->id !== null && $row->id !== '' ) {
+								$map[ (string) $row->id ] = (array) $row;
 						}
 				}
 
@@ -301,7 +313,7 @@ class LJPcCalendarModuleAPIController extends Controller {
 				}
 
 				$permissions = [];
-				foreach ( (array) $request->input( 'permissions', [] ) as $id => $permission ) {
+				foreach ( $this->normalizePermissionsInput( $request->input( 'permissions', [] ) ) as $id => $permission ) {
 						$permissions[ $id ] = [
 								'showInDashboard' => $permission['showInDashboard'] ?? false,
 								'showInCalendar'  => $permission['showInCalendar'] ?? false,
@@ -388,7 +400,7 @@ class LJPcCalendarModuleAPIController extends Controller {
 				}
 
 				$permissions = [];
-				foreach ( (array) $request->input( 'permissions', [] ) as $id => $permission ) {
+				foreach ( $this->normalizePermissionsInput( $request->input( 'permissions', [] ) ) as $id => $permission ) {
 						$permissions[ $id ] = [
 								'showInDashboard' => $permission['showInDashboard'],
 								'showInCalendar'  => $permission['showInCalendar'],
